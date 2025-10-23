@@ -1,5 +1,5 @@
 Django>=4.2
 gunicorn
-rest_framework
+djangorestframework
 whitenoise[brotli]        # serves static files in production
 
