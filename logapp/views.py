@@ -1,105 +1,124 @@
-from rest_framework import generics, mixins, status
-from rest_framework.views import APIView
+from rest_framework import generics, status
 from rest_framework.response import Response
-from django.contrib.auth import login as django_login, logout as django_logout
-from django.contrib.auth.models import User
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.authentication import SessionAuthentication, BasicAuthentication
+from rest_framework.views import APIView
+from django.contrib.auth import login as django_login, logout as django_logout
+from django.contrib.auth.models import User
+from django.shortcuts import get_object_or_404
+from django.db.models import Q
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
 from .models import Resource, Access
 from .serializers import (
     UserSignupSerializer, LoginSerializer,
-    ResourceSerializer, AccessSerializer,TransferOwnershipSerializer
+    ResourceSerializer, AccessSerializer, TransferOwnershipSerializer
 )
-from django.shortcuts import get_object_or_404
-from django.db import IntegrityError
-from django.db.models import Q
 
-
-# 1) Signup - create user
+# ------------------------------------------------
+# 1. Signup View
+# ------------------------------------------------
 class SignupView(generics.CreateAPIView):
     serializer_class = UserSignupSerializer
     queryset = User.objects.all()
 
-# 2) Login - authenticate and create session (no token)
+
+# ------------------------------------------------
+# 2. Login View (Session-based)
+# ------------------------------------------------
 class LoginView(generics.GenericAPIView):
     serializer_class = LoginSerializer
-    authentication_classes = []  # allow unauthenticated to call login
+    authentication_classes = []  # allow unauthenticated users
     permission_classes = []
 
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data["user"]
-        django_login(request, user)  # sets session cookie
-        return Response({"message": "Logged in", "user_id": user.id, "username": user.username})
+        django_login(request, user)  # creates session
+        return Response({"message": "Logged in successfully", "username": user.username}, status=200)
 
-# Logout view (optional)
-class LogoutView(generics.GenericAPIView):
+
+# ------------------------------------------------
+# 3. Logout View
+# ------------------------------------------------
+class LogoutView(APIView):
     authentication_classes = [SessionAuthentication, BasicAuthentication]
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         django_logout(request)
-        return Response({"message": "Logged out"})
+        return Response({"message": "Logged out successfully"}, status=200)
 
-from django.utils.decorators import method_decorator
-from django.views.decorators.csrf import csrf_exempt
 
+# ------------------------------------------------
+# 4. Create Resource
+# ------------------------------------------------
 @method_decorator(csrf_exempt, name='dispatch')
 class ResourceCreateView(generics.CreateAPIView):
     serializer_class = ResourceSerializer
     permission_classes = [IsAuthenticated]
-    authentication_classes = []
+    authentication_classes = [SessionAuthentication, BasicAuthentication]
 
     def perform_create(self, serializer):
         serializer.save(owner=self.request.user)
-@method_decorator(csrf_exempt, name='dispatch')
+
+
+# ------------------------------------------------
+# 5. View / Update Resource (with permission checks)
+# ------------------------------------------------
 class ResourceUpdateView(generics.GenericAPIView):
     serializer_class = ResourceSerializer
     permission_classes = [IsAuthenticated]
     authentication_classes = [SessionAuthentication, BasicAuthentication]
 
+    def has_read_permission(self, user, resource):
+        if resource.owner == user:
+            return True
+        return Access.objects.filter(
+            resource=resource, user=user
+        ).filter(Q(can_read=True) | Q(can_edit=True)).exists()
+
     def has_edit_permission(self, user, resource):
-        """Check if user is owner or has edit access."""
         if resource.owner == user:
             return True
         return Access.objects.filter(resource=resource, user=user, can_edit=True).exists()
 
+    def get(self, request, pk, *args, **kwargs):
+        resource = get_object_or_404(Resource, pk=pk)
+        if not self.has_read_permission(request.user, resource):
+            return Response({"detail": "Permission denied to view"}, status=403)
+        serializer = self.get_serializer(resource)
+        return Response(serializer.data, status=200)
+
     def put(self, request, pk, *args, **kwargs):
         resource = get_object_or_404(Resource, pk=pk)
-
-        # Check if user has edit permission
         if not self.has_edit_permission(request.user, resource):
-            return Response({"detail": "You do not have permission to edit this resource"}, status=403)
-
+            return Response({"detail": "Permission denied to edit"}, status=403)
         serializer = self.get_serializer(resource, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        return Response({"message": "Resource updated", "resource": serializer.data}, status=200)
 
-        return Response({
-            "message": "Resource updated successfully",
-            "resource": serializer.data
-        }, status=200)
 
-# 4) Grant / Update Access - owner only
-# ✅ Grant or revoke access
+# ------------------------------------------------
+# 6. Grant / Revoke Access
+# ------------------------------------------------
 class GrantAccessView(generics.GenericAPIView):
     serializer_class = AccessSerializer
     permission_classes = [IsAuthenticated]
     authentication_classes = [SessionAuthentication, BasicAuthentication]
 
     def has_edit_permission(self, user, resource):
-        """Check if the user is owner or has edit access."""
         if resource.owner == user:
             return True
         return Access.objects.filter(resource=resource, user=user, can_edit=True).exists()
 
     def post(self, request, *args, **kwargs):
-        data = request.data.copy()
+        data = request.data
         resource = get_object_or_404(Resource, id=data.get("resource"))
-
         if not self.has_edit_permission(request.user, resource):
-            return Response({"detail": "You do not have permission to grant access"}, status=403)
+            return Response({"detail": "You cannot grant access"}, status=403)
 
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
@@ -117,7 +136,7 @@ class GrantAccessView(generics.GenericAPIView):
             defaults={"can_read": can_read, "can_edit": can_edit}
         )
 
-        return Response({"message": "Access granted or updated successfully"}, status=200)
+        return Response({"message": "Access granted/updated"}, status=200)
 
     def delete(self, request, *args, **kwargs):
         resource_id = request.data.get("resource")
@@ -126,61 +145,15 @@ class GrantAccessView(generics.GenericAPIView):
         user_obj = get_object_or_404(User, username=username)
 
         if not self.has_edit_permission(request.user, resource):
-            return Response({"detail": "You do not have permission to revoke access"}, status=403)
+            return Response({"detail": "You cannot revoke access"}, status=403)
 
         Access.objects.filter(resource=resource, user=user_obj).delete()
         return Response({"message": "Access revoked"}, status=200)
 
 
-# ✅ Edit resource (for owner or can_edit user)
-class ResourceUpdateView(generics.GenericAPIView):
-    serializer_class = ResourceSerializer
-    permission_classes = [IsAuthenticated]
-    authentication_classes = [SessionAuthentication, BasicAuthentication]
-
-    def has_read_permission(self, user, resource):
-        """Allow owner or anyone with read/edit access."""
-        if resource.owner == user:
-            return True
-        return Access.objects.filter(
-            resource=resource, user=user
-        ).filter(Q(can_read=True) | Q(can_edit=True)).exists()
-
-    def has_edit_permission(self, user, resource):
-        """Allow only owner or users with can_edit=True."""
-        if resource.owner == user:
-            return True
-        return Access.objects.filter(
-            resource=resource, user=user, can_edit=True
-        ).exists()
-
-    # ✅ Read (for owner or read/edit access users)
-    def get(self, request, pk, *args, **kwargs):
-        resource = get_object_or_404(Resource, pk=pk)
-
-        if not self.has_read_permission(request.user, resource):
-            return Response({"detail": "You do not have permission to view this resource"}, status=403)
-
-        serializer = self.get_serializer(resource)
-        return Response(serializer.data, status=200)
-
-    # ✅ Update (only for owner or can_edit users)
-    def put(self, request, pk, *args, **kwargs):
-        resource = get_object_or_404(Resource, pk=pk)
-
-        if not self.has_edit_permission(request.user, resource):
-            return Response({"detail": "You do not have permission to edit this resource"}, status=403)
-
-        serializer = self.get_serializer(resource, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-
-        return Response({
-            "message": "Resource updated successfully",
-            "resource": serializer.data
-        }, status=200)
-# 5) Transfer Ownership - owner transfers entire ownership to another user
-
+# ------------------------------------------------
+# 7. Transfer Ownership
+# ------------------------------------------------
 class TransferOwnershipView(generics.GenericAPIView):
     serializer_class = TransferOwnershipSerializer
     permission_classes = [IsAuthenticated]
@@ -190,28 +163,21 @@ class TransferOwnershipView(generics.GenericAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        # Already returns objects because of PrimaryKeyRelatedField and SlugRelatedField
-        resource = serializer.validated_data['resource']
-        new_owner = serializer.validated_data['new_owner']
-        keep_as_editor = serializer.validated_data['keep_as_editor']
+        resource = serializer.validated_data["resource"]
+        new_owner = serializer.validated_data["new_owner"]
+        keep_as_editor = serializer.validated_data["keep_as_editor"]
 
-        # Check if current user is the owner
         if resource.owner != request.user:
-            return Response(
-                {"detail": "Only the current owner can transfer ownership."},
-                status=status.HTTP_403_FORBIDDEN
-            )
+            return Response({"detail": "Only the owner can transfer ownership"}, status=403)
 
         old_owner = resource.owner
-
-        # Transfer ownership
         resource.owner = new_owner
         resource.save()
 
-        # Remove any existing access record for new owner
+        # Remove any old access for new owner
         Access.objects.filter(resource=resource, user=new_owner).delete()
 
-        # Handle old owner's access
+        # Give old owner editor rights if requested
         if keep_as_editor:
             Access.objects.update_or_create(
                 resource=resource,
@@ -222,8 +188,8 @@ class TransferOwnershipView(generics.GenericAPIView):
             Access.objects.filter(resource=resource, user=old_owner).delete()
 
         return Response({
-            "message": "Ownership transferred successfully.",
+            "message": "Ownership transferred",
             "resource_id": resource.id,
             "new_owner": new_owner.username,
             "old_owner_became_editor": keep_as_editor
-        }, status=status.HTTP_200_OK)
+        }, status=200)
