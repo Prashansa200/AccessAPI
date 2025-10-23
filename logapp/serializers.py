@@ -29,13 +29,24 @@ class UserSignupSerializer(serializers.ModelSerializer):
 # Login Serializer
 # ---------------------------
 class LoginSerializer(serializers.Serializer):
-    username = serializers.CharField()
+    email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
 
     def validate(self, data):
-        user = authenticate(username=data["username"], password=data["password"])
+        email = data.get("email")
+        password = data.get("password")
+
+        # Find the user by email
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            raise serializers.ValidationError("Invalid email or password")
+
+        # Authenticate using username (since Django’s authenticate uses username)
+        user = authenticate(username=user.username, password=password)
         if not user:
-            raise serializers.ValidationError("Invalid credentials")
+            raise serializers.ValidationError("Invalid email or password")
+
         data["user"] = user
         return data
 
