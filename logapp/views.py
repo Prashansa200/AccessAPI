@@ -1,10 +1,7 @@
 from rest_framework import generics, status
 from rest_framework.response import Response
-from rest_framework.views import APIView
-from django.contrib.auth import login as django_login, logout as django_logout
 from django.contrib.auth.models import User
 from django.shortcuts import get_object_or_404
-from django.db.models import Q
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from .models import Resource, Access
@@ -13,24 +10,26 @@ from .serializers import (
     ResourceSerializer, AccessSerializer, TransferOwnershipSerializer
 )
 
-# ------------------------------------------------
-# 1. Signup View
-# ------------------------------------------------
+# ----------------------------------------------------------------------
+# 1️⃣ Signup View
+# ----------------------------------------------------------------------
 @method_decorator(csrf_exempt, name='dispatch')
 class SignupView(generics.CreateAPIView):
-    serializer_class = UserSignupSerializer
     queryset = User.objects.all()
-    permission_classes = []
+    serializer_class = UserSignupSerializer
     authentication_classes = []
+    permission_classes = []
 
 
-# ------------------------------------------------
-# 2. Login View (no session)
-# ------------------------------------------------
+# ----------------------------------------------------------------------
+# 2️⃣ Login View
+# ----------------------------------------------------------------------
+
+
 @method_decorator(csrf_exempt, name='dispatch')
 class LoginView(generics.GenericAPIView):
     serializer_class = LoginSerializer
-    authentication_classes = []  # no session, no token
+    authentication_classes = []
     permission_classes = []
 
     def post(self, request, *args, **kwargs):
@@ -44,75 +43,46 @@ class LoginView(generics.GenericAPIView):
         }, status=200)
 
 
-# ------------------------------------------------
-# 3. Logout View (no session)
-# ------------------------------------------------
-@method_decorator(csrf_exempt, name='dispatch')
-class LogoutView(APIView):
-    authentication_classes = []
-    permission_classes = []
+# ----------------------------------------------------------------------
+# 3️⃣ Resource Create/List View
+# ----------------------------------------------------------------------
 
-    def post(self, request):
-        return Response({"message": "Logout successful"}, status=200)
-
-
-# ------------------------------------------------
-# 4. Create Resource
-# ------------------------------------------------
-@method_decorator(csrf_exempt, name='dispatch')
-class ResourceCreateView(APIView):
-    authentication_classes = []  # disable session/token auth
-    permission_classes = []
-
-    def post(self, request, *args, **kwargs):
-        username = request.data.get("owner")
-        if not username:
-            return Response({"error": "Missing 'owner' field"}, status=400)
-
-        user = User.objects.filter(username=username).first()
-        if not user:
-            return Response({"error": "User not found"}, status=404)
-
-        serializer = ResourceSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save(owner=user)
-            return Response({"message": "Resource created", "data": serializer.data}, status=201)
-        return Response(serializer.errors, status=400)
-
-
-# ------------------------------------------------
-# 5. View / Update Resource (with simple access checks)
-# ------------------------------------------------
-@method_decorator(csrf_exempt, name='dispatch')
-class ResourceUpdateView(generics.GenericAPIView):
+from django.shortcuts import get_object_or_404
+from rest_framework.exceptions import ValidationError
+class ResourceListCreateView(generics.ListCreateAPIView):
+    queryset = Resource.objects.all()
     serializer_class = ResourceSerializer
-    permission_classes = []
+    authentication_classes = []  # No token/session
+    permission_classes = []      # Public for now
+
+    def perform_create(self, serializer):
+        username = self.request.data.get("owner")
+
+        if not username:
+            raise ValidationError({"owner": "This field is required."})
+
+        user = get_object_or_404(User, username=username)
+        serializer.save(owner=user)
+
+# ----------------------------------------------------------------------
+# 4️⃣ Resource Retrieve/Update/Delete View
+# ----------------------------------------------------------------------
+@method_decorator(csrf_exempt, name='dispatch')
+class ResourceRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = Resource.objects.all()
+    serializer_class = ResourceSerializer
     authentication_classes = []
-
-    def get(self, request, pk, *args, **kwargs):
-        resource = get_object_or_404(Resource, pk=pk)
-        serializer = self.get_serializer(resource)
-        return Response(serializer.data, status=200)
-
-    def put(self, request, pk, *args, **kwargs):
-        resource = get_object_or_404(Resource, pk=pk)
-        serializer = self.get_serializer(resource, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return Response({
-            "message": "Resource updated",
-            "resource": serializer.data
-        }, status=200)
+    permission_classes = []
 
 
-# ------------------------------------------------
-# 6. Grant / Revoke Access
-# ------------------------------------------------
+# ----------------------------------------------------------------------
+# 5️⃣ Grant / Revoke Access View
+# ----------------------------------------------------------------------
 @method_decorator(csrf_exempt, name='dispatch')
 class GrantAccessView(generics.GenericAPIView):
     serializer_class = AccessSerializer
-    permission_classes = []
     authentication_classes = []
+    permission_classes = []
 
     def post(self, request, *args, **kwargs):
         data = request.data
@@ -140,18 +110,19 @@ class GrantAccessView(generics.GenericAPIView):
         return Response({"message": "Access revoked"}, status=200)
 
 
-# ------------------------------------------------
-# 7. Transfer Ownership
-# ------------------------------------------------
+# ----------------------------------------------------------------------
+# 6️⃣ Transfer Ownership View
+# ----------------------------------------------------------------------
 @method_decorator(csrf_exempt, name='dispatch')
 class TransferOwnershipView(generics.GenericAPIView):
     serializer_class = TransferOwnershipSerializer
-    permission_classes = []
     authentication_classes = []
+    permission_classes = []
 
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+
         resource = serializer.validated_data["resource"]
         new_owner = serializer.validated_data["new_owner"]
         keep_as_editor = serializer.validated_data["keep_as_editor"]
