@@ -48,7 +48,7 @@ from django.views.decorators.csrf import csrf_exempt
 @method_decorator(csrf_exempt, name='dispatch')
 class ResourceCreateView(generics.CreateAPIView):
     serializer_class = ResourceSerializer
-    permission_classes = []
+    permission_classes = [IsAuthenticated]
     authentication_classes = []
 
     def perform_create(self, serializer):
