@@ -33,15 +33,21 @@ class LoginView(generics.GenericAPIView):
     permission_classes = []
 
     def post(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = serializer.validated_data["user"]
+        email = request.data.get("email")
+        password = request.data.get("password")
+        if not email or not password:
+            return Response({"detail": "Email and password are required."}, status=400)
+
+        user = User.objects.filter(email=email).first()
+        if not user or not user.check_password(password):
+            return Response({"detail": "Invalid credentials."}, status=400)
+
         return Response({
             "message": "Login successful",
             "username": user.username,
+            "email": user.email,
             "user_id": user.id
         }, status=200)
-
 
 # ----------------------------------------------------------------------
 # 3️⃣ Resource Create/List View
