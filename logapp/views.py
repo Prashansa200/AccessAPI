@@ -60,14 +60,24 @@ class LogoutView(APIView):
 # 4. Create Resource
 # ------------------------------------------------
 @method_decorator(csrf_exempt, name='dispatch')
-class ResourceCreateView(generics.CreateAPIView):
-    serializer_class = ResourceSerializer
+class ResourceCreateView(APIView):
+    authentication_classes = []  # disable session/token auth
     permission_classes = []
-    authentication_classes = []
 
-    def perform_create(self, serializer):
-        # Assign a dummy owner or handle user manually if needed
-        serializer.save(owner=None)
+    def post(self, request, *args, **kwargs):
+        username = request.data.get("owner")
+        if not username:
+            return Response({"error": "Missing 'owner' field"}, status=400)
+
+        user = User.objects.filter(username=username).first()
+        if not user:
+            return Response({"error": "User not found"}, status=404)
+
+        serializer = ResourceSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(owner=user)
+            return Response({"message": "Resource created", "data": serializer.data}, status=201)
+        return Response(serializer.errors, status=400)
 
 
 # ------------------------------------------------
