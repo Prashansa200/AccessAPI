@@ -1,15 +1,15 @@
 from django.urls import path
 from .views import (
-    SignupView, LoginView, LogoutView,
-    ResourceCreateView, GrantAccessView, TransferOwnershipView,ResourceUpdateView
+    SignupView, LoginView,
+    ResourceListCreateView, ResourceRetrieveUpdateDestroyView,
+    GrantAccessView, TransferOwnershipView
 )
 
 urlpatterns = [
     path("signup/", SignupView.as_view(), name="signup"),
     path("login/", LoginView.as_view(), name="login"),
-    path("logout/", LogoutView.as_view(), name="logout"),
-    path("resource/create/", ResourceCreateView.as_view(), name="resource-create"),
-    path("access/grant/", GrantAccessView.as_view(), name="access-grant"),
-    path('resources/<int:pk>/', ResourceUpdateView.as_view(), name='update-resource'),
+    path("resource/create/", ResourceListCreateView.as_view(), name="resource-create"),
+    path("resources/<int:pk>/", ResourceRetrieveUpdateDestroyView.as_view(), name="resource-detail"),
+    path("access/grant/", GrantAccessView.as_view(), name="grant-access"),
     path("access/transfer/", TransferOwnershipView.as_view(), name="transfer-ownership"),
 ]
