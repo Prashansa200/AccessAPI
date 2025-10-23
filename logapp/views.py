@@ -43,6 +43,10 @@ class LogoutView(generics.GenericAPIView):
         return Response({"message": "Logged out"})
 
 # 3) Create Resource - owner creates resource
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
+
+@method_decorator(csrf_exempt, name='dispatch')
 class ResourceCreateView(generics.CreateAPIView):
     serializer_class = ResourceSerializer
     permission_classes = [IsAuthenticated]
