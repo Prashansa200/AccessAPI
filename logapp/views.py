@@ -42,7 +42,6 @@ class LogoutView(generics.GenericAPIView):
         django_logout(request)
         return Response({"message": "Logged out"})
 
-# 3) Create Resource - owner creates resource
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 
